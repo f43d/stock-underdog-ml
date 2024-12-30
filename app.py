@@ -39,8 +39,10 @@ discord_webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
 
 # 是否使用 Transformer
 use_transformer = os.getenv("USE_TRANSFORMER", "false").lower() == "true"
-transformer_period = os.getenv("TRANSFORMER_PERIOD", "5y")  # 默認 3 年數據
+transformer_period = os.getenv("TRANSFORMER_PERIOD", "1y")  # 默認 1 年數據
 
+# 是否使用 Prophet
+use_prophet = os.getenv("USE_PROPHET", "false").lower() == "true"
 
 
 def save_to_mongodb(index_name, stock_predictions):
@@ -167,7 +169,7 @@ def get_stock_data(ticker, period):
 
 def prepare_data(data, time_step=60):
     scaler = MinMaxScaler(feature_range=(0, 1))
-    scaled_data = scaler.fit_transform(data[['Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']])
+    scaled_data = scaler.fit_transform(data[['Open', 'High', 'Low', 'Close',   'Volume']])
     X, y = [], []
     for i in range(time_step, len(scaled_data)):
         X.append(scaled_data[i - time_step:i])  # 確保 X 是 (time_step, features)
@@ -214,7 +216,7 @@ def train_lstm_model(X_train, y_train):
 
 def predict_stock(model, data, scaler, time_step=60):
     # 使用多個特徵進行標準化
-    scaled_data = scaler.transform(data[['Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']])
+    scaled_data = scaler.transform(data[['Open', 'High', 'Low', 'Close',   'Volume']])
 
     # 準備測試集
     X_test = [scaled_data[i-time_step:i] for i in range(time_step, len(scaled_data))]
@@ -310,7 +312,7 @@ def train_transformer_model(X_train, y_train, input_shape):
 # Transformer 預測
 def predict_transformer(model, data, scaler, time_step=60):
     # 使用多個特徵進行標準化
-    scaled_data = scaler.transform(data[['Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']])
+    scaled_data = scaler.transform(data[['Open', 'High', 'Low', 'Close',   'Volume']])
 
     # 準備測試集
     X_test = [scaled_data[i-time_step:i] for i in range(time_step, len(scaled_data))]
@@ -361,8 +363,8 @@ def send_to_telegram(message):
         print(f"Telegram 發送失敗: {response.text}")
 
 
-# 送到 discord上 
-def send_to_discord(webhook_url, message):
+# 發送 Discord 消息
+def send_to_discord(message):
     try:
         payload = {
             "content": message
@@ -370,7 +372,7 @@ def send_to_discord(webhook_url, message):
         headers = {
             "Content-Type": "application/json"
         }
-        response = requests.post(webhook_url, json=payload, headers=headers)
+        response = requests.post(discord_webhook_url, json=payload, headers=headers)  # 使用全域變數
         if response.status_code == 204:
             print("訊息已成功傳送到 Discord 頻道。")
         else:
@@ -408,74 +410,13 @@ def send_results(index_name, stock_predictions):
         discord_message += f"**{key}:**\n"
         for stock in predictions:
             discord_message += f"股票: {stock[0]}, 潛力: {stock[1]:.2%}, 現價: {stock[2]:.2f}, 預測價: {stock[3]:.2f}\n"
-    webhook_url = "https://discord.com/api/webhooks/1317462344866992159/f6_dgykIsWRxl4ttibgT62fVWPkly1cx0DseVLFYdNy4Cy2CxVNFdZSZmIpSLu5tXF4G"
-    send_to_discord(webhook_url, discord_message)
+    send_to_discord(discord_message)  # 不再傳入 webhook_url
 
 
 
-# # 股票分析函數 (新增 Prophet 與排序功能)
-
-# for index_name, stock_list in index_stock_map.items():
-#     if index_name not in selected_indices:
-#         continue
-
-#     print(f"處理指數: {index_name}")
-#     lstm_predictions = []
-#     prophet_predictions = []
-#     transformer_predictions = []  # 新增 Transformer 預測結果列表
-
-#     for ticker in stock_list:
-#         data = get_stock_data(ticker, period if not use_transformer else transformer_period)  # 根據開關選擇不同的數據期間
-#         if len(data) < 60:
-#             continue
-
-#         # LSTM 預測
-#         if not use_transformer:
-#             X_train, y_train, lstm_scaler = prepare_data(data)
-#             lstm_model = train_lstm_model(X_train, y_train)
-#             lstm_predicted_prices = predict_stock(lstm_model, data, lstm_scaler)
-#             lstm_current_price = data['Close'].values[-1].item()
-#             lstm_predicted_price = float(lstm_predicted_prices[-1])
-#             lstm_potential = (lstm_predicted_price - lstm_current_price) / lstm_current_price
-#             lstm_predictions.append((ticker, lstm_potential, lstm_current_price, lstm_predicted_price))
-
-#         # Prophet 預測
-#         try:
-#             prophet_model = train_prophet_model(data)
-#             forecast = predict_with_prophet(prophet_model, data)
-#             prophet_current_price = data['Close'].values[-1].item()
-#             prophet_predicted_price = float(forecast['yhat'].iloc[-1])
-#             prophet_potential = (prophet_predicted_price - prophet_current_price) / prophet_current_price
-#             prophet_predictions.append((ticker, prophet_potential, prophet_current_price, prophet_predicted_price))
-#         except Exception as e:
-#             print(f"Prophet 預測失敗: {ticker}, 錯誤: {str(e)}")
-
-#         # Transformer 預測
-#         if use_transformer:
-#             X_train, y_train, transformer_scaler = prepare_data(data)
-#             input_shape = (X_train.shape[1], X_train.shape[2])
-#             transformer_model = train_transformer_model(X_train, y_train, input_shape)
-#             transformer_predicted_prices = predict_transformer(transformer_model, data, transformer_scaler)
-#             transformer_current_price = data['Close'].values[-1].item()
-#             transformer_predicted_price = float(transformer_predicted_prices[-1])
-#             transformer_potential = (transformer_predicted_price - transformer_current_price) / transformer_current_price
-#             transformer_predictions.append((ticker, transformer_potential, transformer_current_price, transformer_predicted_price))
-
-#     # 排序結果
-#     stock_predictions = {
-#         "🥇 前十名 LSTM 🧠": sorted(lstm_predictions, key=lambda x: x[1], reverse=True)[:10] if not use_transformer else [],
-#         "📉 後十名 LSTM 🧠": sorted(lstm_predictions, key=lambda x: x[1])[:10] if not use_transformer else [],
-#         "🚀 前十名 Prophet 🔮": sorted(prophet_predictions, key=lambda x: x[1], reverse=True)[:10],
-#         "⛔ 後十名 Prophet 🔮": sorted(prophet_predictions, key=lambda x: x[1])[:10],
-#         "🚀 前十名 Transformer 🔄": sorted(transformer_predictions, key=lambda x: x[1], reverse=True)[:10] if use_transformer else [],
-#         "⛔ 後十名 Transformer 🔄": sorted(transformer_predictions, key=lambda x: x[1])[:10] if use_transformer else [],
-#     }
-
-#     # 組裝並發送結果
-#     send_results(index_name, stock_predictions)
-    
-
+# # 股票分析函數
 def get_top_and_bottom_10_potential_stocks(period, selected_indices):
+    results = {}
     index_stock_map = {
         "台灣50": get_tw0050_stocks(),
         "台灣中型100": get_tw0051_stocks(),
@@ -492,127 +433,71 @@ def get_top_and_bottom_10_potential_stocks(period, selected_indices):
         print(f"處理指數: {index_name}")
         lstm_predictions = []
         prophet_predictions = []
-        transformer_predictions = []  # 確保變量初始化
+        transformer_predictions = []
 
         for ticker in stock_list:
-            # LSTM 使用 `period` 參數 (3 個月)
             lstm_data = get_stock_data(ticker, period)
-            if len(lstm_data) >= 60:  # 確保數據足夠
+            if len(lstm_data) >= 60:
                 try:
-                    # LSTM 預測邏輯
                     X_train, y_train, lstm_scaler = prepare_data(lstm_data)
-                    print(f"LSTM 訓練數據形狀: X_train: {X_train.shape}, y_train: {y_train.shape}")
                     lstm_model = train_lstm_model(X_train, y_train)
                     lstm_predicted_prices = predict_stock(lstm_model, lstm_data, lstm_scaler)
                     lstm_current_price = lstm_data['Close'].values[-1].item()
                     lstm_predicted_price = float(lstm_predicted_prices[-1])
                     lstm_potential = (lstm_predicted_price - lstm_current_price) / lstm_current_price
                     lstm_predictions.append((ticker, lstm_potential, lstm_current_price, lstm_predicted_price))
-                    print(f"LSTM 預測完成: {ticker}")
                 except Exception as e:
                     print(f"LSTM 預測失敗: {ticker}, 錯誤: {str(e)}")
 
-            # Transformer 使用 `transformer_period` (默認 5 年)
-            transformer_data = get_stock_data(ticker, period=transformer_period)
-            if len(transformer_data) >= 60:  # 確保數據足夠
+            if use_transformer:
+                transformer_data = get_stock_data(ticker, period=transformer_period)
+                if len(transformer_data) >= 60:
+                    try:
+                        X_train, y_train, transformer_scaler = prepare_data(transformer_data)
+                        input_shape = (X_train.shape[1], X_train.shape[2])
+                        transformer_model = train_transformer_model(X_train, y_train, input_shape)
+                        transformer_predicted_prices = predict_transformer(transformer_model, transformer_data, transformer_scaler)
+                        transformer_current_price = transformer_data['Close'].values[-1].item()
+                        transformer_predicted_price = float(transformer_predicted_prices[-1])
+                        transformer_potential = (transformer_predicted_price - transformer_current_price) / transformer_current_price
+                        transformer_predictions.append((ticker, transformer_potential, transformer_current_price, transformer_predicted_price))
+                    except Exception as e:
+                        print(f"Transformer 預測失敗: {ticker}, 錯誤: {str(e)}")
+
+            if use_prophet:
                 try:
-                    # Transformer 預測邏輯
-                    X_train, y_train, transformer_scaler = prepare_data(transformer_data)
-                    input_shape = (X_train.shape[1], X_train.shape[2])
-                    print(f"Transformer 訓練數據形狀: X_train: {X_train.shape}, y_train: {y_train.shape}")
-                    transformer_model = train_transformer_model(X_train, y_train, input_shape)
-                    transformer_predicted_prices = predict_transformer(transformer_model, transformer_data, transformer_scaler)
-                    transformer_current_price = transformer_data['Close'].values[-1].item()
-                    transformer_predicted_price = float(transformer_predicted_prices[-1])
-                    transformer_potential = (transformer_predicted_price - transformer_current_price) / transformer_current_price
-                    transformer_predictions.append((ticker, transformer_potential, transformer_current_price, transformer_predicted_price))
-                    print(f"Transformer 預測完成: {ticker}")
+                    prophet_model = train_prophet_model(lstm_data)
+                    forecast = predict_with_prophet(prophet_model, lstm_data)
+                    prophet_current_price = lstm_data['Close'].values[-1].item()
+                    prophet_predicted_price = float(forecast['yhat'].iloc[-1])
+                    prophet_potential = (prophet_predicted_price - prophet_current_price) / prophet_current_price
+                    prophet_predictions.append((ticker, prophet_potential, prophet_current_price, prophet_predicted_price))
                 except Exception as e:
-                    print(f"Transformer 預測失敗: {ticker}, 錯誤: {str(e)}")
+                    print(f"Prophet 預測失敗: {ticker}, 錯誤: {str(e)}")
 
-            # Prophet 預測
-            try:
-                prophet_model = train_prophet_model(lstm_data)  # Prophet 使用 LSTM 的數據（3 個月）
-                forecast = predict_with_prophet(prophet_model, lstm_data)
-                prophet_current_price = lstm_data['Close'].values[-1].item()
-
-                # 安全提取 Prophet 的預測價格
-                prophet_predicted_price = forecast['yhat'].iloc[-1]
-                if isinstance(prophet_predicted_price, (pd.Series, np.ndarray)):
-                    prophet_predicted_price = float(prophet_predicted_price.item())
-                else:
-                    prophet_predicted_price = float(prophet_predicted_price)
-
-#                prophet_predicted_price = forecast['yhat'].iloc[-1].item()
-                prophet_potential = (prophet_predicted_price - prophet_current_price) / prophet_current_price
-                prophet_predictions.append((ticker, prophet_potential, prophet_current_price, prophet_predicted_price))
-            except Exception as e:
-                print(f"Prophet 預測失敗: {ticker}, 錯誤: {str(e)}")
-
-        # 排序結果
         stock_predictions = {
             "🥇 前十名 LSTM 🧠": sorted(lstm_predictions, key=lambda x: x[1], reverse=True)[:10],
             "📉 後十名 LSTM 🧠": sorted(lstm_predictions, key=lambda x: x[1])[:10],
-            "🚀 前十名 Prophet 🔮": sorted(prophet_predictions, key=lambda x: x[1], reverse=True)[:10],
-            "⛔ 後十名 Prophet 🔮": sorted(prophet_predictions, key=lambda x: x[1])[:10],
-            "🚀 前十名 Transformer 🔄": sorted(transformer_predictions, key=lambda x: x[1], reverse=True)[:10],
-            "⛔ 後十名 Transformer 🔄": sorted(transformer_predictions, key=lambda x: x[1])[:10],
         }
 
-        # 組裝並發送結果
-        send_results(index_name, stock_predictions)
+        if use_prophet and prophet_predictions:
+            stock_predictions.update({
+                "🚀 前十名 Prophet 🔮": sorted(prophet_predictions, key=lambda x: x[1], reverse=True)[:10],
+                "⛔ 後十名 Prophet 🔮": sorted(prophet_predictions, key=lambda x: x[1])[:10],
+            })
 
-    # for index_name, stock_list in index_stock_map.items():
-    #     if index_name not in selected_indices:
-    #         continue
+        if use_transformer and transformer_predictions:
+            stock_predictions.update({
+                "🚀 前十名 Transformer 🔄": sorted(transformer_predictions, key=lambda x: x[1], reverse=True)[:10],
+                "⛔ 後十名 Transformer 🔄": sorted(transformer_predictions, key=lambda x: x[1])[:10],
+            })
 
-    #     print(f"處理指數: {index_name}")
-    #     lstm_predictions = []
-    #     prophet_predictions = []
+        if stock_predictions:
+            results[index_name] = stock_predictions
 
-    #     for ticker in stock_list:
-    #         data = get_stock_data(ticker, period)
-    #         if len(data) < 60:
-    #             continue
+    return results
 
-    #         # LSTM 預測
-    #         # X_train, y_train, lstm_scaler = prepare_data(data)
-    #         # lstm_model = train_lstm_model(X_train, y_train)
-    #         # lstm_predicted_prices = predict_stock(lstm_model, data, lstm_scaler)
-    #         # lstm_current_price = data['Close'].values[-1].item()
-    #         # lstm_predicted_price = float(lstm_predicted_prices[-1][0])
-    #         # lstm_potential = (lstm_predicted_price - lstm_current_price) / lstm_current_price
-    #         # lstm_predictions.append((ticker, lstm_potential, lstm_current_price, lstm_predicted_price))
-    #         # LSTM 預測
-    #         X_train, y_train, lstm_scaler = prepare_data(data)
-    #         lstm_model = train_lstm_model(X_train, y_train)
-    #         lstm_predicted_prices = predict_stock(lstm_model, data, lstm_scaler)
-    #         lstm_current_price = data['Close'].values[-1].item()
-    #         lstm_predicted_price = float(lstm_predicted_prices[-1])  # 不需要再取 [0]
-    #         lstm_potential = (lstm_predicted_price - lstm_current_price) / lstm_current_price
-    #         lstm_predictions.append((ticker, lstm_potential, lstm_current_price, lstm_predicted_price))
 
-    #         # Prophet 預測
-    #         try:
-    #             prophet_model = train_prophet_model(data)
-    #             forecast = predict_with_prophet(prophet_model, data)
-    #             prophet_current_price = data['Close'].values[-1].item()
-    #             prophet_predicted_price = float(forecast['yhat'].iloc[-1])
-    #             prophet_potential = (prophet_predicted_price - prophet_current_price) / prophet_current_price
-    #             prophet_predictions.append((ticker, prophet_potential, prophet_current_price, prophet_predicted_price))
-    #         except Exception as e:
-    #             print(f"Prophet 預測失敗: {ticker}, 錯誤: {str(e)}")
-
-    #     # 排序結果
-    #     stock_predictions = {
-    #         "🥇 前十名 LSTM 🧠": sorted(lstm_predictions, key=lambda x: x[1], reverse=True)[:10],
-    #         "📉 後十名 LSTM 🧠": sorted(lstm_predictions, key=lambda x: x[1])[:10],
-    #         "🚀 前十名 Prophet 🔮": sorted(prophet_predictions, key=lambda x: x[1], reverse=True)[:10],
-    #         "⛔ 後十名 Prophet 🔮": sorted(prophet_predictions, key=lambda x: x[1])[:10],
-    #     }
-
-    #     # 組裝並發送結果
-    #     send_results(index_name, stock_predictions)
 
 # 主函數
 def main():
@@ -620,50 +505,19 @@ def main():
         calculation_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
         period = "3mo"
-        selected_indices = ["台灣50", "台灣中型100", "SP500", "NASDAQ", "費城半導體", "道瓊"]
-#        selected_indices = ["SP500", "NASDAQ", "費城半導體", "道瓊"]
+        selected_indices = ["台灣50", "台灣中型100", "SP500"]
+
         print("計算潛力股...")
         analysis_results = get_top_and_bottom_10_potential_stocks(period, selected_indices)
 
-        # 準備 Email
-        print("準備 Email...")
-        email_body = f"運算日期和時間: {calculation_time}\n\n"
-        for index_name, stocks in analysis_results.items():
-            email_body += f"\n指數: {index_name}\n"
-            for key, predictions in stocks.items():
-                email_body += f"\n{key}:\n"
-                for stock in predictions:
-                    email_body += f"股票: {stock[0]}, 潛力: {stock[1]:.2%}, 現價: {stock[2]:.2f}, 預測價: {stock[3]:.2f}\n"
-
-        email_subject = f"每日潛力股分析DAVID888 - 運算時間: {calculation_time}"
-        send_email(email_subject, email_body, to_emails)
-
-        # 準備 Telegram
-        print("準備 Telegram...")
-        telegram_message = f"<b>每日潛力股分析</b>\n運算日期和時間: <b>{calculation_time}</b>\n\n"
-        for index_name, stocks in analysis_results.items():
-            telegram_message += f"<b>指數: {index_name}</b>\n"
-            for key, predictions in stocks.items():
-                telegram_message += f"<b>{key}:</b>\n"
-                for stock in predictions:
-                    telegram_message += f"股票: {stock[0]}, 潛力: {stock[1]:.2%}, 現價: {stock[2]:.2f}, 預測價: {stock[3]:.2f}\n"
-        send_to_telegram(telegram_message)
-
-        # 準備 Discord
-        print("準備 Discord...")
-        discord_webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
-        discord_message = f"**每日潛力股分析**\n運算日期和時間: **{calculation_time}**\n\n"
-        for index_name, stocks in analysis_results.items():
-            discord_message += f"**指數: {index_name}**\n"
-            for key, predictions in stocks.items():
-                discord_message += f"**{key}:**\n"
-                for stock in predictions:
-                    discord_message += f"股票: {stock[0]}, 潛力: {stock[1]:.2%}, 現價: {stock[2]:.2f}, 預測價: {stock[3]:.2f}\n"
-        send_to_discord(discord_webhook_url, discord_message)
+        # 分開處理每個指數的結果
+        for index_name, stock_predictions in analysis_results.items():
+            print(f"處理並發送結果: {index_name}")
+            send_results(index_name, stock_predictions)
 
     except Exception as e:
         print(f"錯誤: {str(e)}")
         send_to_telegram(f"⚠️ 錯誤: {str(e)}")
-
+        
 if __name__ == "__main__":
     main()
